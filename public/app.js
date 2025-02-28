@@ -17,12 +17,8 @@
     }
 
     login.onclick = function () {
-        fetch('/login', { method: 'POST', credentials: 'same-origin' })
-            .then(handleResponse)
-            .then(showMessage)
-            .catch(function (err) {
-                showMessage(err.message);
-            });
+        // Redirect to login endpoint which starts OAuth flow
+        window.location.href = '/login';
     };
 
     logout.onclick = function () {
@@ -42,7 +38,7 @@
             ws.close();
         }
 
-        ws = new WebSocket(`ws://${location.host}`);
+        ws = new WebSocket(`wss://${location.host}`);
         ws.onerror = function () {
             showMessage('WebSocket error');
         };

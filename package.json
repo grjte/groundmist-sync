@@ -5,9 +5,14 @@
     "type": "module",
     "scripts": {
         "build": "tsc",
-        "start": "node dist/server.js"
+        "start": "node dist/server.js",
+        "keygen": "node keygen.js"
     },
     "dependencies": {
+        "@atproto/api": "^0.14.7",
+        "@atproto/jwk-jose": "^0.1.4",
+        "@atproto/oauth-client-node": "^0.2.11",
+        "dotenv": "^16.4.7",
         "express": "^4.21.2",
         "express-session": "^1.18.1",
         "uuid": "^11.1.0",
