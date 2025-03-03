@@ -6,7 +6,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import * as http from 'http';
 import axios from 'axios';
 import jwt, { JwtPayload } from 'jsonwebtoken';
-import { createHash, createPublicKey, KeyObject } from 'crypto';
+import { createHash, createPublicKey, KeyObject, randomUUID } from 'crypto';
 import { exportSPKI, importJWK } from 'jose';
 import { Agent } from '@atproto/api';
 import { NodeOAuthClient, NodeSavedSession, NodeSavedState } from '@atproto/oauth-client-node';
@@ -17,6 +17,8 @@ dotenv.config();
 declare module 'express-session' {
     interface Session {
         did?: string;
+        client_id?: string;
+        session_id?: string;
     }
 }
 
@@ -28,6 +30,7 @@ const stateMap = new Map<string, NodeSavedState>();
 const sessionMap = new Map<string, NodeSavedSession>();
 
 // Initialize session middleware
+// TODO: update this handling
 const sessionParser = session({
     saveUninitialized: false,
     secret: '$eCuRiTy',
@@ -178,14 +181,58 @@ app.delete('/logout', (req: Request, res: Response) => {
     });
 });
 
+// Add a middleware to handle CORS for the specific routes
+app.options('/check-auth', (req: Request, res: Response) => {
+    const allowedOrigin = req.headers.origin || '';
+    console.log(allowedOrigin);
+
+    // TODO: whitelist allowed origins?
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, DPoP');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+
+    // End preflight request
+    res.status(204).end();
+});
+
 // Check if user is authenticated
 app.get('/check-auth', (req: Request, res: Response) => {
-    if (req.session.did) {
+    const allowedOrigin = req.headers.origin || '';
+    console.log(allowedOrigin);
+
+    // TODO: whitelist allowed origins?
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, DPoP');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+
+    console.log("session:", req.session);
+
+    const token = new URL(req.url, "http://localhost").searchParams.get("token");
+    if (!token) {
+        res.json({
+            authenticated: false
+        });
+        return;
+    }
+    console.log("token:", token);
+
+    try {
+        const payload = jwt.verify(token, process.env.SYNC_SERVER_SECRET_KEY!);
+        const { client_id, did, session_id } = payload as JwtPayload;
+        // Store session did in express session
+        req.session.did = did;
+        req.session.client_id = client_id;
         res.json({
             authenticated: true,
-            did: req.session.did
+            did: req.session.did,
+            client_id: req.session.client_id,
+            session_id: req.session.session_id
         });
-    } else {
+    } catch (err) {
         res.json({
             authenticated: false
         });
@@ -219,14 +266,12 @@ app.post('/authenticate', async (req, res) => {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
 
     try {
-        const did = await verifyBlueskyAccessToken(req);
+        const { client_id, did } = await verifyBlueskyAccessToken(req);
         console.log("did:", did);
-        req.session.did = did;
 
-        // TODO: issue sync token
-        // const syncToken = issueSyncServerToken(did);
-        // res.json({ syncToken });
-        res.json({ result: 'OK', message: 'success' });
+        // issue sync server token
+        const syncToken = await issueSyncServerToken(client_id, did);
+        res.json({ result: 'OK', token: syncToken });
     } catch (error) {
         res.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed' });
     }
@@ -255,7 +300,7 @@ interface DidDocument {
  * @returns {Promise<string>} - The user's DID if valid.
  * @throws {Error} - If verification fails.
  */
-export async function verifyBlueskyAccessToken(req: Request): Promise<string> {
+export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_id: string, did: string }> {
     const authorizationHeader = Array.isArray(req.headers['authorization'])
         ? req.headers['authorization'][0]
         : req.headers['authorization'];
@@ -306,9 +351,10 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<string> {
     // if (htu !== `${req.protocol}://${req.get('host')}${req.originalUrl}`) {
     //     throw new Error(`HTTP URI mismatch in DPoP proof. Proof claim was ${htu}, but actual was ${req.protocol}://${req.get('host')}${req.originalUrl}`);
     // }
-    if (iat! > Math.floor(Date.now() / 1000)) {
-        throw new Error('DPoP proof issued in the future.');
-    }
+    // TODO: fix
+    // if (iat! > Math.floor(Date.now() / 1000)) {
+    //     throw new Error('DPoP proof issued in the future.');
+    // }
     console.log("DPoP claims verified");
 
     // Decode access token to verify cnf claim
@@ -320,7 +366,7 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<string> {
     console.log("access token decoded");
 
     const { payload: accessTokenPayload } = accessTokenDecoded;
-    const { cnf, exp, iss, sub } = accessTokenPayload as JwtPayload;
+    const { cnf, exp, iss, sub, client_id } = accessTokenPayload as JwtPayload;
     console.log("access token payload:", accessTokenPayload);
 
     // Verify token expiration
@@ -351,7 +397,7 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<string> {
     //     throw new Error('Invalid access token signature.');
     // }
 
-    return sub as string; // Return the DID of the user
+    return { client_id, did: sub as string }; // Return the DID of the user
 }
 
 /**
@@ -454,13 +500,35 @@ function calculateJwkThumbprint(jwk: JsonWebKey): string {
     return hashBuffer.toString('base64url');
 }
 
-// TODO: issue sync token
-function issueSyncServerToken(did: string) {
-    return jwt.sign(
-        { user: did },
-        "YOUR_SECRET_KEY",  // Replace with a secure key
-        { expiresIn: "1h" } // Short-lived token
-    );
+/**
+ * Issues a sync server token for future requests.
+ *
+ * @param did - The user's DID.
+ * @returns A signed JWT as a string.
+ */
+export async function issueSyncServerToken(client_id: string, did: string): Promise<string> {
+    // Use a secure secret key stored in an environment variable
+    const secretKey = process.env.SYNC_SERVER_SECRET_KEY;
+    if (!secretKey) {
+        throw new Error('SYNC_SERVER_SECRET_KEY is not defined');
+    }
+
+    // Define the payload. You can include additional claims if needed.
+    const payload = {
+        did,
+        client_id,
+        session_id: randomUUID(), // Generate a unique device identifier per session
+    };
+
+    // Define token options. Here, the token expires in 1 hour.
+    // TODO: set expiration
+    // const options = {
+    //     expiresIn: '3600'
+    // };
+    const options = {}
+
+    // Sign and return the token
+    return jwt.sign(payload, secretKey, options);
 }
 
 //
@@ -487,32 +555,50 @@ server.on('upgrade', (request: any, socket: any, head: any) => {
     console.log('Parsing session from request...');
 
     sessionParser(request, {} as Response, () => {
-        // TODO: Check if token is expired
-        if (!request.session.did) {
+        const token = new URL(request.url, "http://localhost").searchParams.get("token");
+        if (!token) {
             console.error('Session is unauthorized');
             socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
             socket.destroy();
             return;
         }
+        console.log('token:', token);
 
-        console.log('Session is parsed!');
-        socket.removeListener('error', onSocketError);
+        try {
+            const payload = jwt.verify(token, process.env.SYNC_SERVER_SECRET_KEY!);
+            // TODO: Check if token is expired
+            const { did, client_id, session_id } = payload as JwtPayload;
+            if (!did) {
+                console.error('Session is unauthorized');
+                socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+                socket.destroy();
+                return;
+            }
+            request.session.session_id = session_id;
+            request.session.did = did;
 
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            wss.emit('connection', ws, request);
-        });
+            console.log(`Session is parsed! User ${did} at client ${client_id} with session_id ${session_id} is authenticated`);
+            socket.removeListener('error', onSocketError);
+
+            wss.handleUpgrade(request, socket, head, (ws) => {
+                wss.emit('connection', ws, request);
+            });
+        } catch (err) {
+            wss.close();  // Reject unauthorized connections
+        }
     });
 });
 
 wss.on('connection', (ws: WebSocket, request: any) => {
     const did = request.session.did;
+    const session_id = request.session.session_id;
 
-    map.set(did, ws);
+    map.set(session_id, ws);
 
     ws.on('error', console.error);
 
     ws.on('message', (message: Buffer) => {
-        console.log(`Received message ${message} from user ${did}`);
+        console.log(`Received message ${message} from user ${did} with session_id ${session_id}`);
     });
 
     ws.on('close', () => {
