@@ -188,6 +188,45 @@ app.get('/check-auth', (req: Request, res: Response) => {
     }
 });
 
+// Add a middleware to handle CORS for the specific routes
+app.options('/authenticate', (req: Request, res: Response) => {
+    const allowedOrigin = req.headers.origin || '';
+
+    console.log(allowedOrigin);
+
+    // You can check if the origin is in a list of allowed origins
+    // For now, we'll accept the requesting origin
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, DPoP');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+
+    // End preflight request
+    res.status(204).end();
+});
+
+app.post('/authenticate', (req: Request, res: Response) => {
+    // Set CORS headers for the actual request
+    const allowedOrigin = req.headers.origin || '';
+
+    // Set proper CORS headers
+    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+    res.setHeader('Access-Control-Allow-Methods', 'POST');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, DPoP');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    // Your endpoint logic here
+    console.log(req);
+
+    // Send a response
+    res.json({ status: 'success' });
+
+    // TODO: check token
+    // Create a session with this client
+    // Store the session in the express session
+});
+
 //
 // Create an HTTP server.
 //
