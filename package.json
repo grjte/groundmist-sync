@@ -5,7 +5,7 @@
     "type": "module",
     "scripts": {
         "build": "tsc",
-        "start": "node dist/server.js",
+        "start": "node ./dist/index.js",
         "keygen": "node keygen.js"
     },
     "dependencies": {
