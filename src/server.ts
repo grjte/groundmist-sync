@@ -8,7 +8,7 @@ import jwt, { JwtPayload } from 'jsonwebtoken';
 import { verifyBlueskyAccessToken, issueSyncServerToken } from './auth.js';
 // automerge websocket sync server
 import WebSocket, { WebSocketServer } from 'ws';
-import { Repo } from "@automerge/automerge-repo"
+import { AutomergeUrl, Repo } from "@automerge/automerge-repo"
 import { NodeWSServerAdapter } from "@automerge/automerge-repo-network-websocket"
 import { NodeFSStorageAdapter } from "@automerge/automerge-repo-storage-nodefs"
 // environment variables
@@ -67,6 +67,10 @@ export class Server {
     /** @type Map<string, WebSocket> */
     #map
 
+    /** @type Map<string; AutomergeUrl> */
+    // rootDocUrlMap key: {did}-{client_id}
+    #rootDocUrlMap: Map<string, AutomergeUrl> = new Map();
+
     constructor() {
         const dir =
             process.env.DATA_DIR !== undefined ? process.env.DATA_DIR : ".amrg"
@@ -85,6 +89,7 @@ export class Server {
         app.use(express.static('public'));
         app.use(sessionParser);
         app.use(cors);
+        app.use(express.json());
 
         // === Create an HTTP server ===============================================================
         // TODO: is this necessary?
@@ -116,9 +121,24 @@ export class Server {
                 const { client_id, did } = await verifyBlueskyAccessToken(req);
                 console.log("did:", did);
 
+                // manage the root doc for this (did, client_id) pair, if one exists
+                let rootDocUrl = null;
+                if (req.body.rootDocUrl) {
+                    // store the root doc url for this (did, client_id) pair if there isn't one stored already
+                    let rootDocKey = `${did}-${client_id}`;
+                    rootDocUrl = req.body.rootDocUrl;
+                    console.log(`rootDocKey: ${rootDocKey}, rootDocUrl: ${rootDocUrl}`);
+                    if (!this.#rootDocUrlMap.has(rootDocKey)) {
+                        this.#rootDocUrlMap.set(rootDocKey, rootDocUrl);
+                    } else {
+                        // Otherwise, tell the new peer to use the existing root doc url
+                        rootDocUrl = this.#rootDocUrlMap.get(rootDocKey);
+                    }
+                }
+
                 // issue sync server token
                 const syncToken = await issueSyncServerToken(client_id, did);
-                res.json({ result: 'OK', token: syncToken });
+                res.json({ result: 'OK', token: syncToken, rootDocUrl });
             } catch (error) {
                 res.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed' });
             }
