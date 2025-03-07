@@ -21,6 +21,7 @@ declare module 'express-session' {
         did?: string;
         client_id?: string;
         session_id?: string;
+        rootLexiconGroup?: string;
     }
 }
 
@@ -61,8 +62,11 @@ export class Server {
 
     #isReady = false
 
-    /** @type Repo */
-    #repo
+    /** @type Map<string, Repo> */
+    #repoMap: Map<string, Repo> = new Map();
+
+    /** @type Map<string, NodeWSServerAdapter> */
+    #networkAdapterMap: Map<string, NodeWSServerAdapter> = new Map();
 
     /** @type Map<string, WebSocket> */
     #map
@@ -99,17 +103,6 @@ export class Server {
         this.#socket = new WebSocketServer({ clientTracking: true, noServer: true })
         this.#map = new Map<string, WebSocket>();
 
-        // === Initialize the repo =================================================================
-        const config = {
-            network: [new NodeWSServerAdapter(this.#socket as any)],
-            storage: new NodeFSStorageAdapter(dir),
-            peerId: `storage-server-${hostname}`,
-            // Share all documents between clients
-            sharePolicy: async () => true,
-        }
-        /** @ts-ignore @type {(import("@automerge/automerge-repo").PeerId)}  */
-        this.#repo = new Repo(config)
-
         // === Add the home route ==================================================================
         app.get("/", (req, res) => {
             res.send(`👍 atproto-local-sync is running`)
@@ -117,9 +110,42 @@ export class Server {
 
         // === Add the authentication route ========================================================
         app.post('/authenticate', async (req: Request, res: Response) => {
+            console.log("request body:", req.body);
             try {
                 const { client_id, did } = await verifyBlueskyAccessToken(req);
                 console.log("did:", did);
+
+                // this specifies the directory path for storing documents from this connection
+                const rootLexiconGroup = req.body.rootLexiconGroup;
+                const rootLexiconPath = rootLexiconGroup.split('.').join('/');
+                const docDir = `${dir}/${rootLexiconPath}`;
+                if (!fs.existsSync(docDir)) {
+                    fs.mkdirSync(docDir, { recursive: true });
+                }
+                console.log(`docDir: ${docDir}`);
+
+                // Get or create repo for this lexicon group
+                let repo = this.#repoMap.get(rootLexiconGroup);
+                if (!repo) {
+                    // Create new network adapter for this group
+                    const networkAdapter = new NodeWSServerAdapter(this.#socket as any);
+                    this.#networkAdapterMap.set(rootLexiconGroup, networkAdapter);
+
+                    // === Initialize the repo =====================================================
+                    const config = {
+                        network: [networkAdapter],
+                        storage: new NodeFSStorageAdapter(docDir),
+                        peerId: `storage-server-${hostname}-${rootLexiconGroup}`,
+                        sharePolicy: async () => true,
+                    };
+
+                    /** @ts-ignore @type {(import("@automerge/automerge-repo").PeerId)}  */
+                    repo = new Repo(config);
+                    this.#repoMap.set(rootLexiconGroup, repo);
+                }
+
+                // Store the rootLexiconGroup in the session for WebSocket routing
+                req.session.rootLexiconGroup = rootLexiconGroup;
 
                 // manage the root doc for this (did, client_id) pair, if one exists
                 let rootDocUrl = null;
@@ -207,7 +233,7 @@ export class Server {
             socket.on('error', console.error);
 
             socket.on('message', (message: Buffer) => {
-                console.log(`Received message from user ${did} on client ${client_id} with session_id ${session_id}`);
+                console.log(`Received message from user ${did} on client ${client_id} with session_id ${session_id}. Repo located at ${request.session.rootLexiconGroup}`);
             });
 
             socket.on('close', () => {
