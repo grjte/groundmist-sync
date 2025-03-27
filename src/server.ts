@@ -199,7 +199,7 @@ export class Server {
                 console.log('token:', token);
 
                 try {
-                    const payload = jwt.verify(token, process.env.SYNC_SERVER_SECRET_KEY!);
+                    const payload = jwt.verify(token, process.env.PSS_SECRET_KEY!);
                     // TODO: Check if token is expired
                     const { did, client_id, session_id } = payload as JwtPayload;
                     if (!did || did !== process.env.ATPROTO_DID) {

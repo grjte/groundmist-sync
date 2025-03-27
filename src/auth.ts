@@ -219,9 +219,9 @@ function calculateJwkThumbprint(jwk: JsonWebKey): string {
  */
 export async function issueSyncServerToken(client_id: string, did: string): Promise<string> {
     // Use a secure secret key stored in an environment variable
-    const secretKey = process.env.SYNC_SERVER_SECRET_KEY;
+    const secretKey = process.env.PSS_SECRET_KEY;
     if (!secretKey) {
-        throw new Error('SYNC_SERVER_SECRET_KEY is not defined');
+        throw new Error('PSS_SECRET_KEY is not defined');
     }
 
     // Define the payload. You can include additional claims if needed.
