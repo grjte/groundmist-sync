@@ -21,7 +21,7 @@ declare module 'express-session' {
         did?: string;
         client_id?: string;
         session_id?: string;
-        rootLexiconGroup?: string;
+        lexiconAuthorityDomain?: string;
     }
 }
 
@@ -83,7 +83,7 @@ export class Server {
         }
         const hostname = os.hostname()
         const PORT =
-            process.env.PORT !== undefined ? parseInt(process.env.PORT) : 3030
+            process.env.PORT !== undefined ? parseInt(process.env.PORT) : 3031
 
         // === Initialize the express app =========================================================
         const app = express()
@@ -116,36 +116,36 @@ export class Server {
                 console.log("did:", did);
 
                 // this specifies the directory path for storing documents from this connection
-                const rootLexiconGroup = req.body.rootLexiconGroup;
-                const rootLexiconPath = rootLexiconGroup.split('.').join('/');
-                const docDir = `${dir}/${rootLexiconPath}`;
+                const lexiconAuthorityDomain = req.body.lexiconAuthorityDomain;
+                const lexiconAuthorityPath = lexiconAuthorityDomain.split('.').join('/');
+                const docDir = `${dir}/${lexiconAuthorityPath}`;
                 if (!fs.existsSync(docDir)) {
                     fs.mkdirSync(docDir, { recursive: true });
                 }
                 console.log(`docDir: ${docDir}`);
 
                 // Get or create repo for this lexicon group
-                let repo = this.#repoMap.get(rootLexiconGroup);
+                let repo = this.#repoMap.get(lexiconAuthorityDomain);
                 if (!repo) {
                     // Create new network adapter for this group
                     const networkAdapter = new NodeWSServerAdapter(this.#socket as any);
-                    this.#networkAdapterMap.set(rootLexiconGroup, networkAdapter);
+                    this.#networkAdapterMap.set(lexiconAuthorityDomain, networkAdapter);
 
                     // === Initialize the repo =====================================================
                     const config = {
                         network: [networkAdapter],
                         storage: new NodeFSStorageAdapter(docDir),
-                        peerId: `storage-server-${hostname}-${rootLexiconGroup}`,
+                        peerId: `storage-server-${hostname}-${lexiconAuthorityDomain}`,
                         sharePolicy: async () => true,
                     };
 
                     /** @ts-ignore @type {(import("@automerge/automerge-repo").PeerId)}  */
                     repo = new Repo(config);
-                    this.#repoMap.set(rootLexiconGroup, repo);
+                    this.#repoMap.set(lexiconAuthorityDomain, repo);
                 }
 
-                // Store the rootLexiconGroup in the session for WebSocket routing
-                req.session.rootLexiconGroup = rootLexiconGroup;
+                // Store the lexiconAuthorityDomain in the session for WebSocket routing
+                req.session.lexiconAuthorityDomain = lexiconAuthorityDomain;
 
                 // manage the root doc for this (did, client_id) pair, if one exists
                 let rootDocUrl = null;
@@ -233,7 +233,7 @@ export class Server {
             socket.on('error', console.error);
 
             socket.on('message', (message: Buffer) => {
-                console.log(`Received message from user ${did} on client ${client_id} with session_id ${session_id}. Repo located at ${request.session.rootLexiconGroup}`);
+                console.log(`Received message from user ${did} on client ${client_id} with session_id ${session_id}. Repo located at ${request.session.lexiconAuthorityDomain}`);
             });
 
             socket.on('close', () => {
