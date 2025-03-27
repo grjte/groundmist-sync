@@ -114,6 +114,10 @@ export class Server {
             try {
                 const { client_id, did } = await verifyBlueskyAccessToken(req);
                 console.log("did:", did);
+                if (did !== process.env.ATPROTO_DID) {
+                    console.error('Session is unauthorized');
+                    throw new Error("HTTP/1.1 401 Unauthorized\r\n\r\n");
+                }
 
                 // this specifies the directory path for storing documents from this connection
                 const lexiconAuthorityDomain = req.body.lexiconAuthorityDomain;
@@ -198,7 +202,7 @@ export class Server {
                     const payload = jwt.verify(token, process.env.SYNC_SERVER_SECRET_KEY!);
                     // TODO: Check if token is expired
                     const { did, client_id, session_id } = payload as JwtPayload;
-                    if (!did) {
+                    if (!did || did !== process.env.ATPROTO_DID) {
                         console.error('Session is unauthorized');
                         socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
                         socket.destroy();
