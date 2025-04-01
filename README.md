@@ -1,6 +1,6 @@
-# ATProto Local Sync
+# Groundmist Personal Sync Server
 
-A local server for syncing with the AT Protocol (Bluesky) using OAuth authentication.
+A personal sync server for syncing automerge documents using the ATProto identity to sync across devices.
 
 ## Setup
 

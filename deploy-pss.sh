@@ -11,22 +11,22 @@ fi
 ATPROTO_DID="$1"
 
 # Generate random secret key
-PSS_SECRET_KEY=$(openssl rand -hex 64)
+GROUNDMIST_SYNC_SECRET_KEY=$(openssl rand -hex 64)
 
 # Create unique deployment name based on DID
-DEPLOYMENT_NAME="pss-$(echo $ATPROTO_DID | tr ':' '-' | tr '.' '-')"
+DEPLOYMENT_NAME="groundmist-sync-$(echo $ATPROTO_DID | tr ':' '-' | tr '.' '-')"
 
 # Build the Docker image
-docker build -t atproto-pss .
+docker build -t groundmist-sync .
 
 # Deploy using the local image and wait for it to start
 docker run -d \
     --name "$DEPLOYMENT_NAME" \
-    -e PSS_SECRET_KEY="$PSS_SECRET_KEY" \
+    -e GROUNDMIST_SYNC_SECRET_KEY="$GROUNDMIST_SYNC_SECRET_KEY" \
     -e ATPROTO_DID="$ATPROTO_DID" \
     -p 3031:3031 \
     --restart unless-stopped \
-    atproto-pss
+    groundmist-sync
 
 # Wait for container to be running
 echo "Waiting for container to start..."
@@ -57,7 +57,7 @@ echo "-----------------------------------"
 echo "Host: $HOST_IP"
 echo "Port: $PORT"
 echo "Full Location: $HOST_IP:$PORT"
-echo "Secret Key: $PSS_SECRET_KEY"
+echo "Secret Key: $GROUNDMIST_SYNC_SECRET_KEY"
 echo "DID: $ATPROTO_DID"
 echo ""
 echo "Save these credentials securely!" 

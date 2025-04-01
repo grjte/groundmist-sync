@@ -95,17 +95,13 @@ export class Server {
         app.use(cors);
         app.use(express.json());
 
-        // === Create an HTTP server ===============================================================
-        // TODO: is this necessary?
-        // this.#server = http.createServer(app);
-
         // === Create a WebSocket server completely detached from the HTTP server. =================
         this.#socket = new WebSocketServer({ clientTracking: true, noServer: true })
         this.#map = new Map<string, WebSocket>();
 
         // === Add the home route ==================================================================
         app.get("/", (req, res) => {
-            res.send(`👍 atproto-local-sync is running`)
+            res.send(`👍 Groundmist personal sync server is running`)
         })
 
         // === Add the authentication route ========================================================
@@ -199,7 +195,7 @@ export class Server {
                 console.log('token:', token);
 
                 try {
-                    const payload = jwt.verify(token, process.env.PSS_SECRET_KEY!);
+                    const payload = jwt.verify(token, process.env.GROUNDMIST_SYNC_SECRET_KEY!);
                     // TODO: Check if token is expired
                     const { did, client_id, session_id } = payload as JwtPayload;
                     if (!did || did !== process.env.ATPROTO_DID) {
