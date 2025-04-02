@@ -2,6 +2,20 @@
 
 A personal sync server that enables secure document synchronization across devices using [Automerge](https://automerge.org/) and ATProto (Bluesky) identity for authentication. The server allows you to maintain synchronized, conflict-free documents across multiple devices while ensuring only authorized users can access their data.
 
+## Quick Installation (Self-hosted)
+
+```bash
+# Replace sync.example.com with your own domain
+curl -fsSL https://raw.githubusercontent.com/groundmist/groundmist-sync/main/installer.sh | sudo bash -s sync.example.com
+```
+
+This will:
+1. Install the Groundmist Sync Server with SSL certificates
+2. Set up the server to run automatically on boot
+3. Configure HTTPS with a Let's Encrypt certificate
+
+After installation, follow the on-screen instructions to complete the setup and publish your sync server to your Bluesky account.
+
 ## How It Works
 
 ### Authentication Flow
@@ -32,7 +46,7 @@ A personal sync server that enables secure document synchronization across devic
 - Documents are organized by lexicon authority domains for isolation
 - Only the configured Bluesky DID can access the server
 
-## Setup
+## Manual Setup
 
 1. Clone this repository
 2. Install dependencies:
@@ -51,7 +65,7 @@ A personal sync server that enables secure document synchronization across devic
    DATA_DIR=.data # Optional, defaults to .data
    ```
 
-## Running the Application
+## Running the Application Locally
 
 1. Ensure your server is accessible via a public URL (required for Bluesky OAuth)
 
@@ -62,6 +76,37 @@ A personal sync server that enables secure document synchronization across devic
    ```
 
 3. The server will be running at `http://localhost:3031` (or your configured PORT)
+
+## Publishing to Your Bluesky Account
+
+After setting up your sync server, you need to publish its location to your Bluesky account:
+
+```bash
+# Set your credentials
+export PDS_URL=https://bsky.social # or your self-hosted PDS URL
+export HANDLE=your-handle.bsky.social
+export PASSWORD=your-password
+
+# Publish your sync server (replace with your actual server URL)
+node publishPSS.js https://sync.example.com
+```
+
+## Docker Deployment
+
+You can also run the sync server using Docker:
+
+```bash
+docker build -t groundmist-sync .
+
+docker run -d \
+  --name groundmist-sync \
+  -e GROUNDMIST_SYNC_SECRET_KEY="your-secret-key" \
+  -e ATPROTO_DID="did:plc:your-bluesky-did" \
+  -p 3031:3031 \
+  -v ./data:/app/data \
+  --restart unless-stopped \
+  groundmist-sync
+```
 
 ## Environment Variables
 
