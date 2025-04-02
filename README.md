@@ -1,6 +1,36 @@
 # Groundmist Personal Sync Server
 
-A personal sync server for syncing automerge documents using the ATProto identity to sync across devices.
+A personal sync server that enables secure document synchronization across devices using [Automerge](https://automerge.org/) and ATProto (Bluesky) identity for authentication. The server allows you to maintain synchronized, conflict-free documents across multiple devices while ensuring only authorized users can access their data.
+
+## How It Works
+
+### Authentication Flow
+1. Initial Authentication:
+   - User logs in via OAuth in a client application
+   - The client application obtains an ATProto access token and DPoP proof
+   - The client uses the ATProto OAuth session fetch handler to connect to this sync server
+
+2. Server Verification:
+   - The server verifies the DPoP proof and access token provided by the client
+   - The server validates that the user's DID matches the configured ATPROTO_DID
+   - Upon successful verification, the server issues a sync token for WebSocket connections
+
+3. WebSocket Authentication:
+   - The client uses the issued sync token to establish WebSocket connections
+   - Each WebSocket connection is authenticated using the sync token
+   - Only connections with valid sync tokens can participate in document synchronization
+
+### Document Synchronization
+1. The server uses Automerge for conflict-free document synchronization:
+   - Documents are stored in a local filesystem using `@automerge/automerge-repo-storage-nodefs`
+   - Real-time sync is handled via WebSocket connections using `@automerge/automerge-repo-network-websocket`
+   - Each lexicon (document type) group has its own storage directory and sync network
+
+### Security Model
+- Authentication is required for all WebSocket connections
+- Each session gets a unique token for WebSocket authentication
+- Documents are organized by lexicon authority domains for isolation
+- Only the configured Bluesky DID can access the server
 
 ## Setup
 
@@ -13,54 +43,33 @@ A personal sync server for syncing automerge documents using the ATProto identit
    ```
    cp .env.example .env
    ```
-4. Update the `.env` file with your ngrok URL or other public URL:
+4. Configure your `.env` file:
    ```
-   BASE_URL=https://your-ngrok-subdomain.ngrok.app
+   ATPROTO_DID=did:plc:your-bluesky-did
+   GROUNDMIST_SYNC_SECRET_KEY=your-secret-key # generate with 'openssl rand -hex 64'
+   PORT=3030 # Optional, defaults to 3031
+   DATA_DIR=.data # Optional, defaults to .data
    ```
 
 ## Running the Application
 
-1. Start ngrok to expose your local server (if using ngrok):
-   ```
-   ngrok http 3030
-   ```
+1. Ensure your server is accessible via a public URL (required for Bluesky OAuth)
 
-2. Update your `.env` file with the ngrok URL from the previous step.
-
-3. Build and start the server:
+2. Build and start the server:
    ```
    npm run build
    npm start
    ```
 
-4. Open your browser and navigate to `http://localhost:3030` to use the application.
+3. The server will be running at `http://localhost:3031` (or your configured PORT)
 
-## OAuth Flow
+## Environment Variables
 
-This application implements the AT Protocol OAuth flow:
-
-1. User enters their Bluesky handle
-2. User is redirected to Bluesky to authorize the application
-3. Bluesky redirects back to the application with an authorization code
-4. The application exchanges the code for access and refresh tokens
-5. The application uses the tokens to make authenticated API calls
-
-## Troubleshooting
-
-### "Unknown authorization session" Error
-
-If you encounter an "Unknown authorization session" error, it may be due to:
-
-1. Your ngrok URL has changed since you started the OAuth flow
-2. The state parameter is not being properly stored or retrieved
-3. The OAuth client configuration is incorrect
-
-Make sure your BASE_URL in the .env file matches the URL you're accessing the application from.
-
-### CORS Issues
-
-If you encounter CORS issues, make sure your ngrok URL is correctly set in the .env file and that you're accessing the application through that URL.
+- `ATPROTO_DID`: Your Bluesky DID (only this DID will be allowed to sync)
+- `GROUNDMIST_SYNC_SECRET_KEY`: A secret key for signing sync tokens
+- `PORT`: (Optional) The port to run the server on (default: 3031)
+- `DATA_DIR`: (Optional) Directory to store synchronized documents (default: .data)
 
 ## License
 
-MIT 
+MIT
