@@ -2,7 +2,6 @@
 import fs from 'fs';
 import os from 'os';
 // authenticated server connection
-import session from 'express-session';
 import express, { Request, Response } from 'express';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import { verifyBlueskyAccessToken, issueSyncServerToken } from './auth.js';
@@ -14,27 +13,6 @@ import { NodeFSStorageAdapter } from "@automerge/automerge-repo-storage-nodefs"
 // environment variables
 import dotenv from 'dotenv';
 dotenv.config();
-
-// Define session interface
-declare module 'express-session' {
-    interface Session {
-        did?: string;
-        client_id?: string;
-        session_id?: string;
-        lexiconAuthorityDomain?: string;
-    }
-}
-
-// Initialize session middleware
-const sessionParser = session({
-    saveUninitialized: false,
-    secret: '$eCuRiTy',
-    resave: false,
-    cookie: {
-        secure: process.env.NODE_ENV === 'production',
-        httpOnly: true
-    }
-});
 
 // Add CORS middleware
 const cors = (req: Request, res: Response, next: Function) => {
@@ -77,7 +55,7 @@ export class Server {
 
     constructor() {
         const dir =
-            process.env.DATA_DIR !== undefined ? process.env.DATA_DIR : ".amrg"
+            process.env.DATA_DIR !== undefined ? process.env.DATA_DIR : ".data"
         if (!fs.existsSync(dir)) {
             fs.mkdirSync(dir)
         }
@@ -91,7 +69,6 @@ export class Server {
         // === Add the middlewares =================================================================
         // Serve static files from the 'public' folder.
         app.use(express.static('public'));
-        app.use(sessionParser);
         app.use(cors);
         app.use(express.json());
 
@@ -144,9 +121,6 @@ export class Server {
                     this.#repoMap.set(lexiconAuthorityDomain, repo);
                 }
 
-                // Store the lexiconAuthorityDomain in the session for WebSocket routing
-                req.session.lexiconAuthorityDomain = lexiconAuthorityDomain;
-
                 // manage the root doc for this (did, client_id) pair, if one exists
                 let rootDocUrl = null;
                 if (req.body.rootDocUrl) {
@@ -163,7 +137,7 @@ export class Server {
                 }
 
                 // issue sync server token
-                const syncToken = await issueSyncServerToken(client_id, did);
+                const syncToken = await issueSyncServerToken(client_id, did, lexiconAuthorityDomain);
                 res.json({ result: 'OK', token: syncToken, rootDocUrl });
             } catch (error) {
                 res.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed' });
@@ -182,58 +156,51 @@ export class Server {
             console.log('Handling upgrade request');
             socket.on('error', console.error);
 
-            console.log('Parsing session from request...');
+            const token = new URL(request.url, "http://localhost").searchParams.get("token");
+            if (!token) {
+                console.error('Unauthorized: No token provided');
+                socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+                socket.destroy();
+                return;
+            }
 
-            sessionParser(request, {} as Response, () => {
-                const token = new URL(request.url, "http://localhost").searchParams.get("token");
-                if (!token) {
-                    console.error('Session is unauthorized');
+            try {
+                const payload = jwt.verify(token, process.env.GROUNDMIST_SYNC_SECRET_KEY!);
+                const { did, client_id, session_id, lexiconAuthorityDomain } = payload as JwtPayload;
+
+                if (!did || did !== process.env.ATPROTO_DID) {
+                    console.error('Unauthorized: Invalid DID');
                     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
                     socket.destroy();
                     return;
                 }
-                console.log('token:', token);
 
-                try {
-                    const payload = jwt.verify(token, process.env.GROUNDMIST_SYNC_SECRET_KEY!);
-                    // TODO: Check if token is expired
-                    const { did, client_id, session_id } = payload as JwtPayload;
-                    if (!did || did !== process.env.ATPROTO_DID) {
-                        console.error('Session is unauthorized');
-                        socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
-                        socket.destroy();
-                        return;
-                    }
-                    request.session.did = did;
-                    request.session.client_id = client_id;
-                    request.session.session_id = session_id;
+                // Attach the payload directly to the request object
+                request.auth = { did, client_id, session_id, lexiconAuthorityDomain };
 
-                    console.log(`Session is parsed! User ${did} at client ${client_id} with session_id ${session_id} is authenticated`);
-                    // socket.removeListener('error', console.error);
-
-                    this.#socket.handleUpgrade(request, socket, head, (socket) => {
-                        console.log("WebSocket connection established")
-                        this.#socket.emit('connection', socket, request);
-                    });
-                } catch (err) {
-                    console.error(err)
-                    this.#socket.close();  // Reject unauthorized connections
-                }
-            });
+                this.#socket.handleUpgrade(request, socket, head, (socket) => {
+                    console.log("WebSocket connection established")
+                    this.#socket.emit('connection', socket, request);
+                });
+            } catch (err) {
+                console.error(err)
+                socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+                socket.destroy();
+            }
         });
 
 
         this.#socket.on('connection', (socket: WebSocket, request: any) => {
-            const did = request.session.did;
-            const client_id = request.session.client_id;
-            const session_id = request.session.session_id;
-
+            const did = request.auth.did;
+            const client_id = request.auth.client_id;
+            const session_id = request.auth.session_id;
+            const lexiconAuthorityDomain = request.auth.lexiconAuthorityDomain;
             this.#map.set(session_id, socket);
 
             socket.on('error', console.error);
 
             socket.on('message', (message: Buffer) => {
-                console.log(`Received message from user ${did} on client ${client_id} with session_id ${session_id}. Repo located at ${request.session.lexiconAuthorityDomain}`);
+                console.log(`Received message from user ${did} on client ${client_id} with session_id ${session_id}. Repo located at ${lexiconAuthorityDomain}`);
             });
 
             socket.on('close', () => {

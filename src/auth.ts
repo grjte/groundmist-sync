@@ -87,7 +87,7 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_i
     }
     console.log("token expiration verified");
 
-    // Verify that the DPoP proof’s public key thumbprint matches the "cnf" claim in the token.
+    // Verify that the DPoP proof's public key thumbprint matches the "cnf" claim in the token.
     console.log("verifying cnf claim");
     const dpopThumbprint = calculateJwkThumbprint(publicKey);
     console.log("dpopThumbprint:", dpopThumbprint);
@@ -97,7 +97,7 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_i
     // }
     // console.log("cnf claim verified");
 
-    // Verify the access token’s signature.
+    // Verify the access token's signature.
     // Since the issuer ("iss") is "https://bsky.social" (a did:web issuer is not used here),
     // and there is no JWKS endpoint, we use a statically configured public key.
     // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
@@ -217,7 +217,7 @@ function calculateJwkThumbprint(jwk: JsonWebKey): string {
  * @param did - The user's DID.
  * @returns A signed JWT as a string.
  */
-export async function issueSyncServerToken(client_id: string, did: string): Promise<string> {
+export async function issueSyncServerToken(client_id: string, did: string, lexiconAuthorityDomain: string): Promise<string> {
     // Use a secure secret key stored in an environment variable
     const secretKey = process.env.GROUNDMIST_SYNC_SECRET_KEY;
     if (!secretKey) {
@@ -229,6 +229,7 @@ export async function issueSyncServerToken(client_id: string, did: string): Prom
         did,
         client_id,
         session_id: randomUUID(), // Generate a unique device identifier per session
+        lexiconAuthorityDomain,
     };
 
     // Define token options. Here, the token expires in 1 hour.
