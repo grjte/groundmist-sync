@@ -311,13 +311,15 @@ read -p "Do you self-host your PDS? (y/N): " SELF_HOSTED
 if [[ "$SELF_HOSTED" =~ ^[Yy]$ ]]; then
     # Get user input for service URL
     read -p "Enter your PDS URL (e.g., https://pds.example.com): " PDS_URL
+    # Get user input for handle
+    read -p "Enter your handle (e.g., example.com): " HANDLE
 else
     # Use default service URL
     PDS_URL="https://bsky.social"
+    # Get user input for handle
+    read -p "Enter your handle (e.g., user.bsky.social): " HANDLE
 fi
 
-# Get user input for handle
-read -p "Enter your handle (e.g., example.com): " HANDLE
 # Fetch the user's DID from their handle using pds.groundmist.xyz
 ATPROTO_DID=$(curl -s "https://pds.groundmist.xyz/xrpc/com.atproto.identity.resolveHandle?handle=$HANDLE" | jq -r '.did')
 echo -e "ATProto DID: $ATPROTO_DID"
