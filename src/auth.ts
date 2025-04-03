@@ -12,6 +12,7 @@ import { exportSPKI, importJWK } from 'jose';
  * @throws {Error} - If verification fails.
  */
 export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_id: string, did: string }> {
+    console.log("req.headers:", req.headers);
     const authorizationHeader = Array.isArray(req.headers['authorization'])
         ? req.headers['authorization'][0]
         : req.headers['authorization'];
@@ -25,9 +26,7 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_i
     if (!dpopHeader) {
         throw new Error('Missing DPoP header.');
     }
-
-    // Remove "DPoP " prefix to get the access token string
-    const accessToken = authorizationHeader.slice(5);
+    console.log("dpopHeader:", dpopHeader);
 
     // Decode DPoP proof to extract the public key
     const dpopDecoded = jwt.decode(dpopHeader, { complete: true }) as jwt.Jwt | null;
@@ -62,53 +61,77 @@ export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_i
     // if (htu !== `${req.protocol}://${req.get('host')}${req.originalUrl}`) {
     //     throw new Error(`HTTP URI mismatch in DPoP proof. Proof claim was ${htu}, but actual was ${req.protocol}://${req.get('host')}${req.originalUrl}`);
     // }
-    // TODO: fix
-    // if (iat! > Math.floor(Date.now() / 1000)) {
-    //     throw new Error('DPoP proof issued in the future.');
-    // }
+    if (iat! > Math.floor(Date.now() / 1000)) {
+        throw new Error('DPoP proof issued in the future.');
+    }
     console.log("DPoP claims verified");
 
     // Decode access token to verify cnf claim
     console.log("decoding access token");
-    const accessTokenDecoded = jwt.decode(accessToken, { complete: true }) as jwt.Jwt | null;
-    if (!accessTokenDecoded) {
-        throw new Error('Invalid access token.');
+    // Remove "DPoP " prefix to get the access token string
+    console.log("authorizationHeader:", authorizationHeader);
+    const accessToken = authorizationHeader.slice(5);
+    console.log("accessToken:", accessToken);
+
+    // Check if this is an opaque token from a self-hosted PDS (starts with tok-)
+    if (accessToken.startsWith('tok-')) {
+        // TODO: implement verification
+        console.log("Detected opaque token from self-hosted PDS");
+        // For opaque tokens, we need to verify them differently
+        // You might need to make an API call to the PDS to validate the token
+        // or implement a different validation strategy
+
+        // For now, extract or generate the necessary information:
+        // Option 1: Make a request to the PDS to validate the token and get user info
+        // Option 2: Use a simpler approach if you already know the DID
+
+        const did = process.env.ATPROTO_DID; // Or extract from another source
+        const client_id = accessToken; // Use the token itself as the client_id
+
+        return { client_id, did: did as string };
+    } else {
+        // Handle JWT token as before
+        const accessTokenDecoded = jwt.decode(accessToken, { complete: true }) as jwt.Jwt | null;
+        console.log("accessTokenDecoded:", accessTokenDecoded);
+        if (!accessTokenDecoded) {
+            throw new Error('Invalid access token.');
+        }
+        console.log("access token decoded");
+
+        const { payload: accessTokenPayload } = accessTokenDecoded;
+        const { cnf, exp, iss, sub, client_id } = accessTokenPayload as JwtPayload;
+        console.log("access token payload:", accessTokenPayload);
+
+        // Verify token expiration
+        console.log("verifying token expiration");
+        if (exp! < Math.floor(Date.now() / 1000)) {
+            throw new Error('Access token has expired.');
+        }
+        console.log("token expiration verified");
+
+        // Verify that the DPoP proof's public key thumbprint matches the "cnf" claim in the token.
+        console.log("verifying cnf claim");
+        const dpopThumbprint = calculateJwkThumbprint(publicKey);
+        console.log("dpopThumbprint:", dpopThumbprint);
+        // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
+        // if (cnf?.jkt !== dpopThumbprint) {
+        //     throw new Error('DPoP proof key does not match access token cnf claim.');
+        // }
+        // console.log("cnf claim verified");
+
+        // Verify the access token's signature.
+        // Since the issuer ("iss") is "https://bsky.social" (a did:web issuer is not used here),
+        // and there is no JWKS endpoint, we use a statically configured public key.
+        // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
+        // try {
+        //     jwt.verify(accessToken, BLUESKY_PUBLIC_KEY_PEM, { algorithms: ['ES256'] });
+        // // what about when the issuer isn't bluesky.social?
+        // } catch (err) {
+        //     throw new Error('Invalid access token signature.');
+        // }
+
+        return { client_id, did: sub as string };
     }
-    console.log("access token decoded");
-
-    const { payload: accessTokenPayload } = accessTokenDecoded;
-    const { cnf, exp, iss, sub, client_id } = accessTokenPayload as JwtPayload;
-    console.log("access token payload:", accessTokenPayload);
-
-    // Verify token expiration
-    console.log("verifying token expiration");
-    if (exp! < Math.floor(Date.now() / 1000)) {
-        throw new Error('Access token has expired.');
-    }
-    console.log("token expiration verified");
-
-    // Verify that the DPoP proof's public key thumbprint matches the "cnf" claim in the token.
-    console.log("verifying cnf claim");
-    const dpopThumbprint = calculateJwkThumbprint(publicKey);
-    console.log("dpopThumbprint:", dpopThumbprint);
-    // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
-    // if (cnf?.jkt !== dpopThumbprint) {
-    //     throw new Error('DPoP proof key does not match access token cnf claim.');
-    // }
-    // console.log("cnf claim verified");
-
-    // Verify the access token's signature.
-    // Since the issuer ("iss") is "https://bsky.social" (a did:web issuer is not used here),
-    // and there is no JWKS endpoint, we use a statically configured public key.
-    // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
-    // try {
-    //     jwt.verify(accessToken, BLUESKY_PUBLIC_KEY_PEM, { algorithms: ['ES256'] });
-    // // what about when the issuer isn't bluesky.social?
-    // } catch (err) {
-    //     throw new Error('Invalid access token signature.');
-    // }
-
-    return { client_id, did: sub as string }; // Return the DID of the user
 }
 
 /**
