@@ -4,17 +4,41 @@ A personal sync server that enables secure document synchronization across devic
 
 ## Quick Installation (Self-hosted)
 
-```bash
-# Replace sync.example.com with your own domain
-curl -fsSL https://raw.githubusercontent.com/groundmist/groundmist-sync/main/installer.sh | sudo bash -s sync.example.com
-```
-
-This will:
+The self-hosting instructions are similar to setting up a self-hosted PDS. This process will:
 1. Install the Groundmist Sync Server with SSL certificates
 2. Set up the server to run automatically on boot
 3. Configure HTTPS with a Let's Encrypt certificate
+4. Publish the sync server location to your atproto PDS (with your authorization) so applications can find it
 
-After installation, follow the on-screen instructions to complete the setup and publish your sync server to your Bluesky account.
+### 1. [Preparation for self-hosting your Groundmist personal sync server (PSS)](https://atproto.com/guides/self-hosting#preparation-for-self-hosting-pds)
+
+### 2. [Open your cloud firewall for HTTP and HTTPS](https://atproto.com/guides/self-hosting#open-your-cloud-firewall-for-http-and-https)
+
+### 3. [Configure DNS for your domain](https://atproto.com/guides/self-hosting#configure-dns-for-your-domain)
+
+Note: only one `A` record is required for your Groundmist PSS, e.g. `sync.example.com`
+
+### 4. [Check that DNS is working as expected](https://atproto.com/guides/self-hosting#configure-dns-for-your-domain)
+
+### 5. Installer on Ubuntu 20.04/22.04 and Debian 11/12
+
+On your server via ssh, download the installer script using wget:
+
+```bash
+wget https://raw.githubusercontent.com/grjte/groundmist-sync/main/installer.sh
+```
+
+or download it using curl:
+
+```bash
+curl https://raw.githubusercontent.com/grjte/groundmist-sync/main/installer.sh >installer.sh
+```
+
+And then run the installer using bash:
+
+```bash
+sudo bash installer.sh
+```
 
 ## How It Works
 
