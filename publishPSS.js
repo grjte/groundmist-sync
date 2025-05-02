@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { AtpAgent } from '@atproto/api';
+import { Agent } from '@atproto/api';
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -43,7 +43,7 @@ async function main() {
     }
 
     // Initialize the AT Protocol agent.
-    const agent = new AtpAgent({ service });
+    const agent = new Agent({ service });
 
     try {
         await agent.login({ identifier: handle, password });

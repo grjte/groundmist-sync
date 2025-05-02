@@ -2,6 +2,13 @@
 
 A personal sync server that enables secure document synchronization across devices using [Automerge](https://automerge.org/) and ATProto (Bluesky) identity for authentication. The server allows you to maintain synchronized, conflict-free documents across multiple devices while ensuring only authorized users can access their data.
 
+> ⚠️ **Security Warning: this is a prototype with INCOMPLETE & INSECURE AUTHENTICATION**
+> 
+> The purpose of this prototype is to demonstrate the possibilities of the personal sync server (PSS) model. It demonstrates a pattern for authentication, but auth is not fully implemented for the following reasons, and **unverified connections are allowed for demonstration purposes.**
+>
+> - Self-hosted PDSes: this sync server does not currently authenticate opaque atproto access tokens, which are the default format for access tokens of self-hosted atproto PDSes. All requests are approved without authentication. There is currently no straightforward way to validate both the DID ownership and the `client_id` of the application attempting to open a WebSocket connection. We expect this to change in the future, and the purpose of this prototype is to demonstrate the possibilities of the PSS paradigm, so we allow all connection requests that match the DID of the PSS.
+> - PDSes hosted by `bsky.social`: at the time of writing, `bsky.social` has switched to the did `did:web:bsky.social` but there is no DID document published at the `.well-known` endpoint (`https://bsky.social/.well-known/did.json`), so we do not perform signature verification of the JWT access token.
+
 ## Quick Installation (Self-hosted)
 
 The self-hosting instructions are similar to setting up a self-hosted PDS. This process will:
@@ -65,10 +72,11 @@ sudo bash installer.sh
    - Each lexicon (document type) group has its own storage directory and sync network
 
 ### Security Model
-- Authentication is required for all WebSocket connections
+> ⚠️ **Security Warning: this is a prototype with INCOMPLETE & INSECURE AUTHENTICATION**
+- Authentication is required for all WebSocket connections (note: not fully implemented)
 - Each session gets a unique token for WebSocket authentication
-- Documents are organized by lexicon authority domains for isolation
-- Only the configured Bluesky DID can access the server
+- Documents are organized by lexicon authority domains for isolation enabling granular access control (note: unimplemented)
+- Only the configured Bluesky DID which owns the personal sync server should be able to access (note: not fully implemented)
 
 ## Manual Setup
 
@@ -101,19 +109,6 @@ sudo bash installer.sh
 
 3. The server will be running at `http://localhost:3031` (or your configured PORT)
 
-## Publishing to Your Bluesky Account
-
-After setting up your sync server, you need to publish its location to your Bluesky account:
-
-```bash
-# Set your credentials
-export PDS_URL=https://bsky.social # or your self-hosted PDS URL
-export HANDLE=your-handle.bsky.social
-export PASSWORD=your-password
-
-# Publish your sync server (replace with your actual server URL)
-node publishPSS.js https://sync.example.com
-```
 
 ## Docker Deployment
 
@@ -132,12 +127,23 @@ docker run -d \
   groundmist-sync
 ```
 
-## Environment Variables
+## Publishing to Your Bluesky Account
 
-- `ATPROTO_DID`: Your Bluesky DID (only this DID will be allowed to sync)
-- `GROUNDMIST_SYNC_SECRET_KEY`: A secret key for signing sync tokens
-- `PORT`: (Optional) The port to run the server on (default: 3031)
-- `DATA_DIR`: (Optional) Directory to store synchronized documents (default: .data)
+If you do not use the installer script to set up your sync server (for example, you're running it locally), then you'll need to publish the sync server host to your Bluesky account.
+
+Notes: 
+- if your PSS is running locally, you will need to use a proxy for the host.
+- When saving the host in your PDS, the protocol should be excluded (e.g. "sync.example.com", not "https://sync.example.com")
+
+```bash
+# Set your credentials
+export PDS_URL=https://bsky.social # or your self-hosted PDS URL
+export HANDLE=your-handle.bsky.social
+export PASSWORD=your-password
+
+# Publish your sync server (replace with your actual server URL)
+node publishPSS.js sync.example.com
+```
 
 ## License
 
