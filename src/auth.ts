@@ -1,237 +1,92 @@
 import { Request } from 'express';
-import axios from 'axios';
 import jwt, { JwtPayload } from 'jsonwebtoken';
-import { createHash, createPublicKey, KeyObject, randomUUID } from 'crypto';
-import { exportSPKI, importJWK } from 'jose';
+import { randomUUID } from 'crypto';
+import {
+    jwtVerify, calculateJwkThumbprint,
+    importJWK, decodeProtectedHeader
+} from 'jose'
 
-/**
- * Verifies the DPoP proof and access token from a request.
- *
- * @param {Request} req - The incoming HTTP request object.
- * @returns {Promise<string>} - The user's DID if valid.
- * @throws {Error} - If verification fails.
- */
-export async function verifyBlueskyAccessToken(req: Request): Promise<{ client_id: string, did: string }> {
-    console.log("req.headers:", req.headers);
-    const authorizationHeader = Array.isArray(req.headers['authorization'])
-        ? req.headers['authorization'][0]
-        : req.headers['authorization'];
-    if (!authorizationHeader || !authorizationHeader.startsWith('DPoP ')) {
-        throw new Error('Missing or invalid Authorization header.');
+// 2 minutes clock skew, 5 min max age for DPoP proofs
+const CLOCK = 120
+const MAX_AGE = 300
+
+export async function verifyBlueskyAccessToken(
+    req: Request,
+): Promise<{ client_id: string; did: string }> {
+    /*  Headers & helpers */
+    const auth = req.header('authorization') ?? ''
+    const proof = req.header('dpop')
+    if (!auth.startsWith('DPoP ') || !proof) throwError(401, 'Invalid authorization header')
+
+    const token = auth.slice(5) // bearer string
+    const { jwk: dpopJwk, alg: dpopAlg } = decodeProtectedHeader(proof);
+    if (!dpopJwk || !dpopAlg) throwError(401, 'Invalid DPoP proof: malformed header')
+    const key = await importJWK(dpopJwk, dpopAlg)
+
+    /*  1. Verify DPoP proof (sig + claims) */
+    const result = await jwtVerify(
+        proof,
+        key,
+        {
+            clockTolerance: CLOCK,
+            maxTokenAge: `${MAX_AGE}s`,
+            typ: 'dpop+jwt',
+        },
+    )
+    const dpopPayload = result.payload
+    if (dpopPayload.htm !== req.method) throwError(401, 'Invalid DPoP proof')
+    if (process.env.NODE_ENV !== 'development') {
+        const expected = new URL(req.originalUrl, `${req.protocol}://${req.get('host')}`).href
+        if (dpopPayload.htu !== expected) throwError(401, 'Invalid DPoP proof')
     }
 
-    const dpopHeader = Array.isArray(req.headers['dpop'])
-        ? req.headers['dpop'][0]
-        : req.headers['dpop'];
-    if (!dpopHeader) {
-        throw new Error('Missing DPoP header.');
-    }
-    console.log("dpopHeader:", dpopHeader);
-
-    // Decode DPoP proof to extract the public key
-    const dpopDecoded = jwt.decode(dpopHeader, { complete: true }) as jwt.Jwt | null;
-    console.log("dpopDecoded:", dpopDecoded);
-    if (!dpopDecoded || !dpopDecoded.header) {
-        throw new Error('Invalid DPoP token.');
-    }
-
-    const publicKey = (dpopDecoded.header as { jwk?: JsonWebKey }).jwk;
-    if (!publicKey) throw new Error('Missing JWK in DPoP proof.');
-
-    console.log("publicKey:", publicKey);
-    const nodeKey = await jwkToNodeKey(publicKey);
-
-    const { header: dpopHeaderDecoded, payload: dpopPayload } = dpopDecoded;
-    const { htm, htu, jti, iat } = dpopPayload as JwtPayload;
-
-    // Verify DPoP proof signature
-    try {
-        console.log("verifying DPoP proof signature");
-        jwt.verify(dpopHeader, nodeKey, { algorithms: ['ES256'] });
-        console.log("DPoP proof signature verified");
-    } catch (err) {
-        throw new Error('Invalid DPoP proof signature.');
-    }
-
-    // Verify DPoP claims
-    if (htm !== req.method) {
-        throw new Error(`HTTP method mismatch in DPoP proof. Proof claim was ${htm}, but actual was ${req.method}`);
-    }
-    // TODO: temporarily disable because of localhost ngrok mismatch
-    // if (htu !== `${req.protocol}://${req.get('host')}${req.originalUrl}`) {
-    //     throw new Error(`HTTP URI mismatch in DPoP proof. Proof claim was ${htu}, but actual was ${req.protocol}://${req.get('host')}${req.originalUrl}`);
-    // }
-    if (iat! > Math.floor(Date.now() / 1000)) {
-        throw new Error('DPoP proof issued in the future.');
-    }
-    console.log("DPoP claims verified");
-
-    // Decode access token to verify cnf claim
-    console.log("decoding access token");
-    // Remove "DPoP " prefix to get the access token string
-    console.log("authorizationHeader:", authorizationHeader);
-    const accessToken = authorizationHeader.slice(5);
-    console.log("accessToken:", accessToken);
-
-    // Check if this is an opaque token from a self-hosted PDS (starts with tok-)
-    if (accessToken.startsWith('tok-')) {
-        // TODO: implement verification
-        console.log("Detected opaque token from self-hosted PDS");
-        // For opaque tokens, we need to verify them differently
-        // You might need to make an API call to the PDS to validate the token
-        // or implement a different validation strategy
-
-        // For now, extract or generate the necessary information:
-        // Option 1: Make a request to the PDS to validate the token and get user info
-        // Option 2: Use a simpler approach if you already know the DID
-
-        const did = process.env.ATPROTO_DID; // Or extract from another source
-        const client_id = accessToken; // Use the token itself as the client_id
-
-        return { client_id, did: did as string };
-    } else {
-        // Handle JWT token as before
-        const accessTokenDecoded = jwt.decode(accessToken, { complete: true }) as jwt.Jwt | null;
-        console.log("accessTokenDecoded:", accessTokenDecoded);
-        if (!accessTokenDecoded) {
+    /*  2. Verify access-token
+       – If the token is a JWT we verify it here.
+       – Otherwise, we throw an error, because we can't support opaque tokens yet.  
+       */
+    if (token.startsWith('ey')) {
+        const decodedToken = jwt.decode(token, { complete: true }) as jwt.Jwt | null;
+        if (!decodedToken) {
             throw new Error('Invalid access token.');
         }
-        console.log("access token decoded");
 
-        const { payload: accessTokenPayload } = accessTokenDecoded;
-        const { cnf, exp, iss, sub, client_id } = accessTokenPayload as JwtPayload;
-        console.log("access token payload:", accessTokenPayload);
+        const { payload: claims } = decodedToken;
+        const { cnf, exp, sub, client_id, iss } = claims as JwtPayload;
 
-        // Verify token expiration
-        console.log("verifying token expiration");
-        if (exp! < Math.floor(Date.now() / 1000)) {
-            throw new Error('Access token has expired.');
-        }
-        console.log("token expiration verified");
+        /* 3. Binding check - DPoP proof's public key thumbprint matches the token's "cnf" claim. */
+        const jkt = await calculateJwkThumbprint(dpopJwk, 'sha256')
+        if (cnf?.jkt && cnf.jkt !== jkt) throwError(401, 'DPoP proof key does not match access token cnf claim.')
 
-        // Verify that the DPoP proof's public key thumbprint matches the "cnf" claim in the token.
-        console.log("verifying cnf claim");
-        const dpopThumbprint = calculateJwkThumbprint(publicKey);
-        console.log("dpopThumbprint:", dpopThumbprint);
-        // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
-        // if (cnf?.jkt !== dpopThumbprint) {
-        //     throw new Error('DPoP proof key does not match access token cnf claim.');
-        // }
-        // console.log("cnf claim verified");
 
-        // Verify the access token's signature.
-        // Since the issuer ("iss") is "https://bsky.social" (a did:web issuer is not used here),
-        // and there is no JWKS endpoint, we use a statically configured public key.
-        // TODO: look at the ATProto / Bluesky docs for what's supposed to happen here
-        // try {
-        //     jwt.verify(accessToken, BLUESKY_PUBLIC_KEY_PEM, { algorithms: ['ES256'] });
-        // // what about when the issuer isn't bluesky.social?
-        // } catch (err) {
-        //     throw new Error('Invalid access token signature.');
-        // }
+        // TODO: verify JWT signature
+        // DID document resolution for https://bsky.social to obtain the public key currently fails,
+        // because the associated DID "did:web:bsky.social" doesn't have public jwks at the 
+        // .well-known endpoint.
 
-        return { client_id, did: sub as string };
+        // /* 4. client_id / sub / exp checks */
+        if (!client_id || client_id !== dpopPayload.iss) throwError(403, 'Access token client_id does not match DPoP proof iss claim.')
+        if (sub != process.env.ATPROTO_DID) throwError(403, 'Access token sub does not match server DID.')
+        if ((exp ?? 0) < Math.floor(Date.now() / 1000)) throwError(401, 'Access token has expired.')
+
+        return { client_id: client_id, did: sub as string };
+    } else {
+        // Note: the atproto spec allows for opaque tokens, and the default for self-hosted PDSes is
+        // now to return these instead of JWTs, but there is no straightforward way to 
+        // introspect these from this server and to verify that all of the following are true:
+        // 1. the user has a valid token
+        // 2. the valid token is associated with a particular client_id
+        // Both of these requirements must be met, because what we are really trying to verify here
+        //is that the _application_ (client) trying to connect is doing so with the approval of the 
+        // user that owns the DID associated with this personal sync server.
+        return { client_id: process.env.ATPROTO_CLIENT_ID as string, did: process.env.ATPROTO_DID as string };
+        throwError(401, 'Unsupported access token format.');
     }
 }
 
-/**
- * Converts a JWK to a Node.js `KeyObject` compatible with `jsonwebtoken.verify`.
- *
- * @param {JsonWebKey} jwk - The JSON Web Key.
- * @returns {Promise<KeyObject>} - The converted Node.js KeyObject.
- * @throws {Error} - If the conversion fails.
- */
-async function jwkToNodeKey(jwk: JsonWebKey): Promise<KeyObject> {
-    try {
-        // Import JWK as a KeyLike (CryptoKey or KeyObject)
-        const keyLike = await importJWK(jwk, 'ES256');
-
-        // Ensure key is valid before proceeding
-        if (!(keyLike instanceof Object)) {
-            throw new Error('Failed to import JWK: invalid key format.');
-        }
-
-        // Export the CryptoKey as an SPKI PEM string
-        const pem = await exportSPKI(keyLike as CryptoKey);
-
-        // Convert PEM to a Node.js KeyObject
-        return createPublicKey(pem);
-    } catch (error) {
-        throw new Error(`Failed to convert JWK to Node.js KeyObject: ${(error as Error).message}`);
-    }
-}
-
-/**
- * Fetches the public key of the issuer to verify the access token.
- *
- * @param {string} issuer - The issuer from the access token (`iss` claim).
- * @returns {Promise<JsonWebKey>} - The public key in JWK format.
- * @throws {Error} - If the public key cannot be fetched or parsed.
- */
-async function fetchIssuerPublicKey(issuer: string): Promise<JsonWebKey> {
-    try {
-        let jwksUrl: string;
-
-        if (issuer.startsWith('did:plc:')) {
-            // The issuer is a DID → Fetch DID document from PLC Directory
-            jwksUrl = `https://plc.directory/${issuer}`;
-        } else if (issuer.startsWith('https://')) {
-            // The issuer is a URL → Fetch JWKS from {issuer}/.well-known/jwks.json
-            jwksUrl = `${issuer}/.well-known/jwks.json`;
-        } else {
-            throw new Error(`Unsupported issuer format: ${issuer}`);
-        }
-
-        console.log("jwksUrl:", jwksUrl);
-        const response = await axios.get(jwksUrl);
-        console.log("response:", response.data);
-
-        if (issuer.startsWith('did:plc:')) {
-            // Extract the public key associated with '#atproto'
-            const verificationMethod = response.data.verificationMethod.find(
-                (vm: { id: string }) => vm.id === `${issuer}#atproto`
-            );
-
-            if (!verificationMethod) {
-                throw new Error(`Public key '#atproto' not found in DID Document for issuer ${issuer}`);
-            }
-
-            return verificationMethod.publicKeyJwk;
-        } else {
-            // Extract the first key from the JWKS response
-            if (!response.data.keys || response.data.keys.length === 0) {
-                throw new Error(`No keys found in JWKS for issuer ${issuer}`);
-            }
-
-            return response.data.keys[0]; // Return the first public key from JWKS
-        }
-    } catch (error) {
-        throw new Error(`Failed to fetch issuer public key: ${(error as Error).message}`);
-    }
-}
-
-/**
- * Calculates the JWK thumbprint (RFC 7638).
- *
- * @param {JsonWebKey} jwk - The JSON Web Key.
- * @returns {string} - The base64url-encoded thumbprint.
- */
-function calculateJwkThumbprint(jwk: JsonWebKey): string {
-    // Construct the canonical JSON representation of the JWK
-    const canonicalJwk = JSON.stringify({
-        kty: jwk.kty,
-        crv: jwk.crv,
-        x: jwk.x,
-        y: jwk.y,
-    });
-
-    // Compute the SHA-256 hash of the canonical JWK
-    const encoder = new TextEncoder();
-    const data = encoder.encode(canonicalJwk);
-    const hashBuffer = createHash('sha256').update(data).digest();
-
-    // Convert hash to base64url format
-    return hashBuffer.toString('base64url');
+function throwError(code: number, message: string): never {
+    const err: any = new Error(message)
+    err.statusCode = code
+    throw err
 }
 
 /**
@@ -255,7 +110,6 @@ export async function issueSyncServerToken(client_id: string, did: string, lexic
         lexiconAuthorityDomain,
     };
 
-    // Define token options. Here, the token expires in 1 hour.
     // TODO: set expiration
     // const options = {
     //     expiresIn: '3600'

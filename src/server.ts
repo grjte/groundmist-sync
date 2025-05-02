@@ -2,7 +2,7 @@
 import fs from 'fs';
 import os from 'os';
 // authenticated server connection
-import express, { Request, Response } from 'express';
+import express, { Request, Response, RequestHandler } from 'express';
 import jwt, { JwtPayload } from 'jsonwebtoken';
 import { verifyBlueskyAccessToken, issueSyncServerToken } from './auth.js';
 // automerge websocket sync server
@@ -82,15 +82,9 @@ export class Server {
         })
 
         // === Add the authentication route ========================================================
-        app.post('/authenticate', async (req: Request, res: Response) => {
-            console.log("request body:", req.body);
+        app.post('/authenticate', (async (req: Request, res: Response) => {
             try {
                 const { client_id, did } = await verifyBlueskyAccessToken(req);
-                console.log("did:", did);
-                if (did !== process.env.ATPROTO_DID) {
-                    console.error('Session is unauthorized');
-                    throw new Error("HTTP/1.1 401 Unauthorized\r\n\r\n");
-                }
 
                 // this specifies the directory path for storing documents from this connection
                 const lexiconAuthorityDomain = req.body.lexiconAuthorityDomain;
@@ -137,12 +131,13 @@ export class Server {
                 }
 
                 // issue sync server token
-                const syncToken = await issueSyncServerToken(client_id, did, lexiconAuthorityDomain);
+                const syncToken = await issueSyncServerToken(client_id!, did, lexiconAuthorityDomain);
                 res.json({ result: 'OK', token: syncToken, rootDocUrl });
             } catch (error) {
+                console.error("error:", error);
                 res.status(401).json({ error: error instanceof Error ? error.message : 'Authentication failed' });
             }
-        });
+        }) as RequestHandler);
 
         // === Start the server ====================================================================
         this.#server = app.listen(PORT, () => {
